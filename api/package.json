@@ -2,11 +2,7 @@
   "name": "hooked-backend",
   "version": "1.0.0",
   "type": "commonjs",
-  "dependencies": {
-    "@distube/ytdl-core": "^4.14.4",
-    "form-data": "^4.0.0",
-    "node-fetch": "^2.7.0"
-  },
+  "dependencies": {},
   "engines": {
     "node": "22.x"
   }
