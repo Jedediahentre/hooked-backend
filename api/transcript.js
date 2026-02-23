@@ -25,18 +25,21 @@ async function getTranscript(videoId) {
   const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers });
   const html = await pageRes.text();
 
-  const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;/s);
-  if (!match) throw new Error('Could not find player data on YouTube page.');
-
-  let playerData;
-  try { playerData = JSON.parse(match[1]); }
-  catch { throw new Error('Could not parse YouTube player data.'); }
-
-  const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!captionTracks || captionTracks.length === 0) {
-    throw new Error('No captions available for this video. The creator has disabled transcripts.');
+  // Find caption tracks directly in the raw HTML
+  const captionMatch = html.match(/"captionTracks":(\[.*?\])/);
+  if (!captionMatch) {
+    throw new Error('No captions found. This video may have captions disabled or may be age-restricted.');
   }
 
+  let captionTracks;
+  try { captionTracks = JSON.parse(captionMatch[1]); }
+  catch { throw new Error('Could not parse caption data.'); }
+
+  if (!captionTracks || captionTracks.length === 0) {
+    throw new Error('No captions available for this video.');
+  }
+
+  // Prefer English, fall back to first available
   const track = captionTracks.find(t => t.languageCode === 'en')
     || captionTracks.find(t => t.languageCode?.startsWith('en'))
     || captionTracks[0];
