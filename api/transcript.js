@@ -1,10 +1,7 @@
-import ytdl from '@distube/ytdl-core';
-import FormData from 'form-data';
-import fetch from 'node-fetch';
+const FormData = require('form-data');
+const fetch = require('node-fetch');
 
-export const config = { api: { bodyParser: false } };
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -17,13 +14,13 @@ export default async function handler(req, res) {
   if (!OPENAI_KEY) return res.status(500).json({ error: 'Missing OpenAI API key' });
 
   try {
-    // Download audio from YouTube
+    const ytdl = require('@distube/ytdl-core');
+
     const audioStream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
       filter: 'audioonly',
       quality: 'lowestaudio',
     });
 
-    // Collect audio chunks
     const chunks = [];
     await new Promise((resolve, reject) => {
       audioStream.on('data', chunk => chunks.push(chunk));
@@ -33,7 +30,6 @@ export default async function handler(req, res) {
 
     const audioBuffer = Buffer.concat(chunks);
 
-    // Send to Whisper
     const form = new FormData();
     form.append('file', audioBuffer, { filename: 'audio.mp4', contentType: 'audio/mp4' });
     form.append('model', 'whisper-1');
@@ -49,7 +45,6 @@ export default async function handler(req, res) {
     const whisperData = await whisperRes.json();
     if (whisperData.error) throw new Error(whisperData.error.message);
 
-    // Format with timestamps
     const lines = (whisperData.segments || []).map(seg => {
       const m = Math.floor(seg.start / 60);
       const s = Math.floor(seg.start % 60);
@@ -58,4 +53,6 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ transcript: lines.join('\n') });
   } catch (e) {
-    return res.status(500).jso
+    return res.status(500).json({ error: e.message || 'Transcription failed' });
+  }
+};
