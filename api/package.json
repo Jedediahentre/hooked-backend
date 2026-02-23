@@ -1,0 +1,11 @@
+{
+  "name": "hooked-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Hooked - YouTube transcript fetcher",
+  "dependencies": {
+    "youtube-transcript": "^1.2.1"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
