@@ -6,6 +6,6 @@
     "youtube-transcript": "^1.2.1"
   },
   "engines": {
-    "node": "18.x"
+    "node": "22.x"
   }
 }
