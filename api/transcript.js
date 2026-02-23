@@ -1,37 +1,65 @@
-import { YoutubeTranscript } from 'youtube-transcript';
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const { videoId } = req.query;
   if (!videoId) return res.status(400).json({ error: 'Missing videoId' });
 
   try {
-    const raw = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
-    const lines = raw.map(item => {
-      const secs = Math.floor(item.offset / 1000);
+    const transcript = await getTranscript(videoId);
+    return res.status(200).json({ transcript });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Could not fetch transcript' });
+  }
+}
+
+async function getTranscript(videoId) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+
+  const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers });
+  const html = await pageRes.text();
+
+  const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;/s);
+  if (!match) throw new Error('Could not find player data on YouTube page.');
+
+  let playerData;
+  try { playerData = JSON.parse(match[1]); }
+  catch { throw new Error('Could not parse YouTube player data.'); }
+
+  const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!captionTracks || captionTracks.length === 0) {
+    throw new Error('No captions available for this video. The creator has disabled transcripts.');
+  }
+
+  const track = captionTracks.find(t => t.languageCode === 'en')
+    || captionTracks.find(t => t.languageCode?.startsWith('en'))
+    || captionTracks[0];
+
+  const captionUrl = track.baseUrl + '&fmt=json3';
+  const captionRes = await fetch(captionUrl, { headers });
+  const captionData = await captionRes.json();
+
+  if (!captionData.events || captionData.events.length === 0) {
+    throw new Error('Transcript was empty for this video.');
+  }
+
+  const lines = captionData.events
+    .filter(e => e.segs)
+    .map(e => {
+      const secs = Math.floor((e.tStartMs || 0) / 1000);
       const m = Math.floor(secs / 60);
       const s = secs % 60;
-      return `[${m}:${s.toString().padStart(2, '0')}] ${item.text.replace(/\n/g, ' ').trim()}`;
-    }).filter(Boolean);
+      const text = e.segs.map(s => s.utf8 || '').join('').replace(/\n/g, ' ').trim();
+      return text ? `[${m}:${s.toString().padStart(2, '0')}] ${text}` : null;
+    })
+    .filter(Boolean);
 
-    return res.status(200).json({ transcript: lines.join('\n') });
-  } catch (e) {
-    try {
-      const raw = await YoutubeTranscript.fetchTranscript(videoId);
-      const lines = raw.map(item => {
-        const secs = Math.floor(item.offset / 1000);
-        const m = Math.floor(secs / 60);
-        const s = secs % 60;
-        return `[${m}:${s.toString().padStart(2, '0')}] ${item.text.replace(/\n/g, ' ').trim()}`;
-      }).filter(Boolean);
-      return res.status(200).json({ transcript: lines.join('\n') });
-    } catch (e2) {
-      return res.status(500).json({ error: e2.message || 'Could not fetch transcript' });
-    }
-  }
+  if (lines.length === 0) throw new Error('Transcript appears empty.');
+  return lines.join('\n');
 }
