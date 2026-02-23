@@ -1,3 +1,9 @@
+import ytdl from '@distube/ytdl-core';
+import FormData from 'form-data';
+import fetch from 'node-fetch';
+
+export const config = { api: { bodyParser: false } };
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -7,62 +13,49 @@ export default async function handler(req, res) {
   const { videoId } = req.query;
   if (!videoId) return res.status(400).json({ error: 'Missing videoId' });
 
+  const OPENAI_KEY = process.env.OPENAI_API_KEY;
+  if (!OPENAI_KEY) return res.status(500).json({ error: 'Missing OpenAI API key' });
+
   try {
-    const transcript = await getTranscript(videoId);
-    return res.status(200).json({ transcript });
+    // Download audio from YouTube
+    const audioStream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
+      filter: 'audioonly',
+      quality: 'lowestaudio',
+    });
+
+    // Collect audio chunks
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      audioStream.on('data', chunk => chunks.push(chunk));
+      audioStream.on('end', resolve);
+      audioStream.on('error', reject);
+    });
+
+    const audioBuffer = Buffer.concat(chunks);
+
+    // Send to Whisper
+    const form = new FormData();
+    form.append('file', audioBuffer, { filename: 'audio.mp4', contentType: 'audio/mp4' });
+    form.append('model', 'whisper-1');
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'segment');
+
+    const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, ...form.getHeaders() },
+      body: form
+    });
+
+    const whisperData = await whisperRes.json();
+    if (whisperData.error) throw new Error(whisperData.error.message);
+
+    // Format with timestamps
+    const lines = (whisperData.segments || []).map(seg => {
+      const m = Math.floor(seg.start / 60);
+      const s = Math.floor(seg.start % 60);
+      return `[${m}:${s.toString().padStart(2, '0')}] ${seg.text.trim()}`;
+    });
+
+    return res.status(200).json({ transcript: lines.join('\n') });
   } catch (e) {
-    return res.status(500).json({ error: e.message || 'Could not fetch transcript' });
-  }
-}
-
-async function getTranscript(videoId) {
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  };
-
-  const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, { headers });
-  const html = await pageRes.text();
-
-  // Find caption tracks directly in the raw HTML
-  const captionMatch = html.match(/"captionTracks":(\[.*?\])/);
-  if (!captionMatch) {
-    throw new Error('No captions found. This video may have captions disabled or may be age-restricted.');
-  }
-
-  let captionTracks;
-  try { captionTracks = JSON.parse(captionMatch[1]); }
-  catch { throw new Error('Could not parse caption data.'); }
-
-  if (!captionTracks || captionTracks.length === 0) {
-    throw new Error('No captions available for this video.');
-  }
-
-  // Prefer English, fall back to first available
-  const track = captionTracks.find(t => t.languageCode === 'en')
-    || captionTracks.find(t => t.languageCode?.startsWith('en'))
-    || captionTracks[0];
-
-  const captionUrl = track.baseUrl + '&fmt=json3';
-  const captionRes = await fetch(captionUrl, { headers });
-  const captionData = await captionRes.json();
-
-  if (!captionData.events || captionData.events.length === 0) {
-    throw new Error('Transcript was empty for this video.');
-  }
-
-  const lines = captionData.events
-    .filter(e => e.segs)
-    .map(e => {
-      const secs = Math.floor((e.tStartMs || 0) / 1000);
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
-      const text = e.segs.map(s => s.utf8 || '').join('').replace(/\n/g, ' ').trim();
-      return text ? `[${m}:${s.toString().padStart(2, '0')}] ${text}` : null;
-    })
-    .filter(Boolean);
-
-  if (lines.length === 0) throw new Error('Transcript appears empty.');
-  return lines.join('\n');
-}
+    return res.status(500).jso
